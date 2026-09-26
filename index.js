@@ -95,7 +95,7 @@ app.get('/api', async (req, res) => {
     }
   }
 
-  // 2. FALLBACK: Si las APIs fallen pero tenemos un videoID, raspar el HTML directamente
+  // 2. FALLBACK: Si las APIs fallan pero tenemos un videoID, raspar el HTML directamente
   if (videoId) {
     for (const base of activeNodes) {
       try {
