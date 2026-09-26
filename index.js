@@ -9,7 +9,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Lista de instancias base para intentar llamadas a API y Scraping
 let activeNodes = [
   'https://invidious.f5.si',
   'https://inv.nadeko.net',
@@ -18,7 +17,6 @@ let activeNodes = [
   'https://yt.chocolatemoo53.com'
 ];
 
-// Función para raspar información de un video directamente del HTML cuando la API falla
 async function scrapeVideoData(baseUrl, videoId) {
   const url = `${baseUrl}/watch?v=${videoId}`;
   const response = await fetch(url, {
@@ -29,19 +27,26 @@ async function scrapeVideoData(baseUrl, videoId) {
   const html = await response.text();
   const $ = cheerio.load(html);
 
-  const title = $('meta[property="og:title"]').attr('content') \vert{}\vert{} $('#searchbox').val() || '';
-  const description = $('#description').text().trim() || '';
+  // Extraer el título evitando el operador || para prevenir errores de codificación
+  let title = $('meta[property="og:title"]').attr('content');
+  if (!title) title = $('#searchbox').val();
+  if (!title) title = '';
+
+  const description = $('#description').text().trim();
   
-  // Extraer fuentes de video del elemento <video>
   const formatStreams = [];
   $('video source').each((i, el) => {
     const src = $(el).attr('src');
     const type = $(el).attr('type');
     if (src) {
+      const fullSrc = src.startsWith('http') ? src : `${baseUrl}${src}`;
+      const streamType = type ? type : 'video/mp4';
+      const quality = $(el).attr('title') ?$(el).attr('title') : '720p';
+
       formatStreams.push({
-        url: src.startsWith('http') ? src : `${baseUrl}${src}`,
-        mimeType: type || 'video/mp4',
-        qualityLabel: $(el).attr('title') || '720p'
+        url: fullSrc,
+        mimeType: streamType,
+        qualityLabel: quality
       });
     }
   });
@@ -58,7 +63,6 @@ app.get('/api', async (req, res) => {
   const ep = req.query.ep;
   if (!ep) return res.status(400).json({ error: 'Falta el parámetro ep' });
 
-  // Detectar ID de video en la petición
   let videoId = null;
   if (ep.includes('/videos/')) {
     videoId = ep.split('/videos/')[1];
@@ -66,7 +70,6 @@ app.get('/api', async (req, res) => {
     videoId = ep.replace('/streams/', '');
   }
 
-  // 1. Intentar responder vía API estándar de Invidious
   let cleanEp = ep.startsWith('/streams/') ? `/api/v1/videos/${videoId}` : ep;
   if (!cleanEp.startsWith('/api/v1')) {
     cleanEp = `/api/v1${cleanEp.startsWith('/') ? '' : '/'}${cleanEp}`;
@@ -95,7 +98,6 @@ app.get('/api', async (req, res) => {
     }
   }
 
-  // 2. FALLBACK: Si las APIs fallan pero tenemos un videoID, raspar el HTML directamente
   if (videoId) {
     for (const base of activeNodes) {
       try {
