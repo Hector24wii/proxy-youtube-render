@@ -8,31 +8,56 @@ app.use((req, res, next) => {
   next();
 });
 
-// Lista de instancias activas de Invidious (Sin inv.tux.pizza)
-const INVIDIOUS_INSTANCES = [
-  'https://inv.nadeko.net/api/v1',
-  'https://invidious.nerdvpn.de/api/v1',
-  'https://invidious.flokinet.to/api/v1',
-  'https://invidious.privacydev.net/api/v1',
-  'https://invidious.tiekoetter.com/api/v1',
-  'https://invidious.projectsegfau.lt/api/v1'
+// Lista de respaldo con instancias que SÍ tienen la API pública activa actualmente
+let dynamicInstances = [
+  'https://invidious.f5.si',
+  'https://invidious.projectsegfau.lt',
+  'https://invidious.privacydev.net',
+  'https://inv.privacy.com.de'
 ];
+
+// Filtrar dinámicamente usando la API oficial
+async function updateInstances() {
+  try {
+    const res = await fetch('https://api.invidious.io/instances.json?sort_by=type,users');
+    if (res.ok) {
+      const data = await res.json();
+      // FILTRO CLAVE: Solo guardar dominios HTTPS que tengan api: true
+      const online = data
+        .filter(item => item[1] && item[1].type === 'https' && item[1].api === true)
+        .map(item => item[1].uri.replace(/\/$/, ''));
+
+      if (online.length > 0) {
+        dynamicInstances = online;
+        console.log(`[OK] ${dynamicInstances.length} instancias con API activa encontradas:`, dynamicInstances);
+      }
+    }
+  } catch (err) {
+    console.log('[WARN] Usando lista de respaldo local para Invidious.');
+  }
+}
+
+// Ejecutar al iniciar y actualizar cada 10 minutos
+updateInstances();
+setInterval(updateInstances, 10 * 60 * 1000);
 
 app.get('/api', async (req, res) => {
   const ep = req.query.ep;
   if (!ep) return res.status(400).json({ error: 'Falta el parámetro ep' });
 
-  // Normalizar el endpoint para asegurar la ruta de Invidious
+  // Normalizar endpoint de Piped a Invidious
   let cleanEp = ep;
-  if (cleanEp.startsWith('/api/v1')) {
-    cleanEp = cleanEp.replace('/api/v1', '');
+  if (cleanEp.startsWith('/streams/')) {
+    const videoId = cleanEp.replace('/streams/', '');
+    cleanEp = `/api/v1/videos/${videoId}`;
+  } else if (!cleanEp.startsWith('/api/v1')) {
+    cleanEp = `/api/v1${cleanEp.startsWith('/') ? '' : '/'}${cleanEp}`;
   }
 
-  for (const base of INVIDIOUS_INSTANCES) {
+  for (const base of dynamicInstances) {
     try {
       const controller = new AbortController();
-      // Si la instancia no responde en 2s, salta inmediatamente a la siguiente
-      const timeout = setTimeout(() => controller.abort(), 2000);
+      const timeout = setTimeout(() => controller.abort(), 3000);
 
       const targetUrl = base + cleanEp;
 
@@ -50,13 +75,12 @@ app.get('/api', async (req, res) => {
         return res.json(data);
       }
     } catch (e) {
-      // Si la instancia actual falla o da timeout, continúa con la siguiente
       continue;
     }
   }
 
-  res.status(503).json({ error: 'Todas las instancias de Invidious están ocupadas' });
+  res.status(503).json({ error: 'Sin respuesta de las APIs de Invidious activas.' });
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Proxy Invidious corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Proxy Invidious con filtro API activo en puerto ${PORT}`));
