@@ -33,7 +33,7 @@ async function updateNodes() {
       }
     }
   } catch (e) {
-    // Si falla el listado oficial, se mantiene activeNodes
+    // Mantener la lista estática si falla la consulta
   }
 }
 
@@ -85,6 +85,24 @@ async function scrapeVideoData(baseUrl, videoId) {
   };
 }
 
+// ENDPOINT DE INSTANCIAS: Soporta GET /instances.json y /api/v1/instances
+app.get(['/instances.json', '/api/v1/instances'], (req, res) => {
+  const instancesFormatted = activeNodes.map(uri => {
+    const domain = uri.replace('https://', '').replace('http://', '');
+    return [
+      domain,
+      {
+        uri: uri,
+        type: 'https',
+        api: true,
+        cors: true
+      }
+    ];
+  });
+  res.json(instancesFormatted);
+});
+
+// ENDPOINT PRINCIPAL PROXY: /api?ep=...
 app.get('/api', async (req, res) => {
   const ep = req.query.ep;
   if (!ep) return res.status(400).json({ error: 'Falta el parámetro ep' });
@@ -101,7 +119,7 @@ app.get('/api', async (req, res) => {
     cleanEp = `/api/v1${cleanEp.startsWith('/') ? '' : '/'}${cleanEp}`;
   }
 
-  // 1. Intentar llamados mediante API
+  // 1. Intentar llamadas mediante API
   for (const base of activeNodes) {
     try {
       const controller = new AbortController();
