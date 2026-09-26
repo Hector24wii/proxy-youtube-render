@@ -1,5 +1,6 @@
 const express = require('express');
 const fetch = require('node-fetch');
+const cheerio = require('cheerio');
 const app = express();
 
 app.use((req, res, next) => {
@@ -8,60 +9,75 @@ app.use((req, res, next) => {
   next();
 });
 
-// Lista de respaldo con instancias que SÍ tienen la API pública activa actualmente
-let dynamicInstances = [
+// Lista de instancias base para intentar llamadas a API y Scraping
+let activeNodes = [
   'https://invidious.f5.si',
-  'https://invidious.projectsegfau.lt',
+  'https://inv.nadeko.net',
+  'https://invidious.nerdvpn.de',
   'https://invidious.privacydev.net',
-  'https://inv.privacy.com.de'
+  'https://yt.chocolatemoo53.com'
 ];
 
-// Filtrar dinámicamente usando la API oficial
-async function updateInstances() {
-  try {
-    const res = await fetch('https://api.invidious.io/instances.json?sort_by=type,users');
-    if (res.ok) {
-      const data = await res.json();
-      // FILTRO CLAVE: Solo guardar dominios HTTPS que tengan api: true
-      const online = data
-        .filter(item => item[1] && item[1].type === 'https' && item[1].api === true)
-        .map(item => item[1].uri.replace(/\/$/, ''));
+// Función para raspar información de un video directamente del HTML cuando la API falla
+async function scrapeVideoData(baseUrl, videoId) {
+  const url = `${baseUrl}/watch?v=${videoId}`;
+  const response = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36' }
+  });
+  
+  if (!response.ok) throw new Error('Error al acceder al HTML');
+  const html = await response.text();
+  const $ = cheerio.load(html);
 
-      if (online.length > 0) {
-        dynamicInstances = online;
-        console.log(`[OK] ${dynamicInstances.length} instancias con API activa encontradas:`, dynamicInstances);
-      }
+  const title = $('meta[property="og:title"]').attr('content') \vert{}\vert{} $('#searchbox').val() || '';
+  const description = $('#description').text().trim() || '';
+  
+  // Extraer fuentes de video del elemento <video>
+  const formatStreams = [];
+  $('video source').each((i, el) => {
+    const src = $(el).attr('src');
+    const type = $(el).attr('type');
+    if (src) {
+      formatStreams.push({
+        url: src.startsWith('http') ? src : `${baseUrl}${src}`,
+        mimeType: type || 'video/mp4',
+        qualityLabel: $(el).attr('title') || '720p'
+      });
     }
-  } catch (err) {
-    console.log('[WARN] Usando lista de respaldo local para Invidious.');
-  }
-}
+  });
 
-// Ejecutar al iniciar y actualizar cada 10 minutos
-updateInstances();
-setInterval(updateInstances, 10 * 60 * 1000);
+  return {
+    title,
+    description,
+    videoId,
+    formatStreams
+  };
+}
 
 app.get('/api', async (req, res) => {
   const ep = req.query.ep;
   if (!ep) return res.status(400).json({ error: 'Falta el parámetro ep' });
 
-  // Normalizar endpoint de Piped a Invidious
-  let cleanEp = ep;
-  if (cleanEp.startsWith('/streams/')) {
-    const videoId = cleanEp.replace('/streams/', '');
-    cleanEp = `/api/v1/videos/${videoId}`;
-  } else if (!cleanEp.startsWith('/api/v1')) {
+  // Detectar ID de video en la petición
+  let videoId = null;
+  if (ep.includes('/videos/')) {
+    videoId = ep.split('/videos/')[1];
+  } else if (ep.includes('/streams/')) {
+    videoId = ep.replace('/streams/', '');
+  }
+
+  // 1. Intentar responder vía API estándar de Invidious
+  let cleanEp = ep.startsWith('/streams/') ? `/api/v1/videos/${videoId}` : ep;
+  if (!cleanEp.startsWith('/api/v1')) {
     cleanEp = `/api/v1${cleanEp.startsWith('/') ? '' : '/'}${cleanEp}`;
   }
 
-  for (const base of dynamicInstances) {
+  for (const base of activeNodes) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
+      const timeout = setTimeout(() => controller.abort(), 2500);
 
-      const targetUrl = base + cleanEp;
-
-      const response = await fetch(targetUrl, {
+      const response = await fetch(base + cleanEp, {
         signal: controller.signal,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36',
@@ -79,8 +95,22 @@ app.get('/api', async (req, res) => {
     }
   }
 
-  res.status(503).json({ error: 'Sin respuesta de las APIs de Invidious activas.' });
+  // 2. FALLBACK: Si las APIs fallen pero tenemos un videoID, raspar el HTML directamente
+  if (videoId) {
+    for (const base of activeNodes) {
+      try {
+        const data = await scrapeVideoData(base, videoId);
+        if (data.formatStreams.length > 0) {
+          return res.json(data);
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+  }
+
+  res.status(503).json({ error: 'Servidores de Invidious ocupados. Reintente en unos segundos.' });
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Proxy Invidious con filtro API activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Proxy Híbrido (API + Scraping) activo en puerto ${PORT}`));
