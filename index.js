@@ -1,29 +1,47 @@
 const express = require('express');
-const cors = require('cors');
+const fetch = require('node-fetch');
 const app = express();
 
-app.use(cors());
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  next();
+});
 
-// Instancias de Invidious (incluyendo invidious.tiekoetter.com)
+// Lista de instancias activas de Invidious (Sin inv.tux.pizza)
 const INVIDIOUS_INSTANCES = [
-  'https://invidious.tiekoetter.com/api/v1',
   'https://inv.nadeko.net/api/v1',
+  'https://invidious.nerdvpn.de/api/v1',
   'https://invidious.flokinet.to/api/v1',
-  'https://invidious.drgns.space/api/v1'
+  'https://invidious.privacydev.net/api/v1',
+  'https://invidious.tiekoetter.com/api/v1',
+  'https://invidious.projectsegfau.lt/api/v1'
 ];
 
 app.get('/api', async (req, res) => {
   const ep = req.query.ep;
   if (!ep) return res.status(400).json({ error: 'Falta el parámetro ep' });
 
-  for (const instance of INVIDIOUS_INSTANCES) {
+  // Normalizar el endpoint para asegurar la ruta de Invidious
+  let cleanEp = ep;
+  if (cleanEp.startsWith('/api/v1')) {
+    cleanEp = cleanEp.replace('/api/v1', '');
+  }
+
+  for (const base of INVIDIOUS_INSTANCES) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 4000); // Límite de espera de 4s
+      // Si la instancia no responde en 2s, salta inmediatamente a la siguiente
+      const timeout = setTimeout(() => controller.abort(), 2000);
 
-      const response = await fetch(instance + ep, {
+      const targetUrl = base + cleanEp;
+
+      const response = await fetch(targetUrl, {
         signal: controller.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'application/json'
+        }
       });
       clearTimeout(timeout);
 
@@ -32,13 +50,13 @@ app.get('/api', async (req, res) => {
         return res.json(data);
       }
     } catch (e) {
-      // Si tiekoetter o la instancia actual fallan, salta automáticamente a la siguiente
+      // Si la instancia actual falla o da timeout, continúa con la siguiente
       continue;
     }
   }
 
-  res.status(503).json({ error: 'No se pudo conectar a ninguna instancia' });
+  res.status(503).json({ error: 'Todas las instancias de Invidious están ocupadas' });
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Proxy corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Proxy Invidious corriendo en puerto ${PORT}`));
