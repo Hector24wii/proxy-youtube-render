@@ -9,31 +9,57 @@ app.use((req, res, next) => {
   next();
 });
 
+// Lista inicial de instancias
 let activeNodes = [
   'https://invidious.f5.si',
   'https://inv.nadeko.net',
   'https://invidious.nerdvpn.de',
-  'https://invidious.privacydev.net',
-  'https://yt.chocolatemoo53.com'
+  'https://yt.chocolatemoo53.com',
+  'https://invidious.privacydev.net'
 ];
 
+// Actualizar lista de nodos desde api.invidious.io periódicamente
+async function updateNodes() {
+  try {
+    const res = await fetch('https://api.invidious.io/instances.json?sort_by=type,health');
+    if (res.ok) {
+      const data = await res.json();
+      const onlineNodes = data
+        .filter(item => item[1] && item[1].type === 'https' && item[1].monitor && !item[1].monitor.down)
+        .map(item => item[1].uri);
+
+      if (onlineNodes.length > 0) {
+        activeNodes = Array.from(new Set([...onlineNodes, ...activeNodes]));
+      }
+    }
+  } catch (e) {
+    // Si falla el listado oficial, se mantiene activeNodes
+  }
+}
+
+// Ejecutar actualización al iniciar y cada 15 minutos
+updateNodes();
+setInterval(updateNodes, 15 * 60 * 1000);
+
+// Extraer datos del video directamente desde la página HTML
 async function scrapeVideoData(baseUrl, videoId) {
   const url = `${baseUrl}/watch?v=${videoId}`;
   const response = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36' }
+    headers: { 
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36' 
+    }
   });
-  
-  if (!response.ok) throw new Error('Error al acceder al HTML');
+
+  if (!response.ok) throw new Error('Error al obtener el HTML');
   const html = await response.text();
   const $ = cheerio.load(html);
 
-  // Extraer el título evitando el operador || para prevenir errores de codificación
   let title = $('meta[property="og:title"]').attr('content');
   if (!title) title = $('#searchbox').val();
   if (!title) title = '';
 
   const description = $('#description').text().trim();
-  
+
   const formatStreams = [];
   $('video source').each((i, el) => {
     const src = $(el).attr('src');
@@ -75,6 +101,7 @@ app.get('/api', async (req, res) => {
     cleanEp = `/api/v1${cleanEp.startsWith('/') ? '' : '/'}${cleanEp}`;
   }
 
+  // 1. Intentar llamados mediante API
   for (const base of activeNodes) {
     try {
       const controller = new AbortController();
@@ -98,6 +125,7 @@ app.get('/api', async (req, res) => {
     }
   }
 
+  // 2. Fallback mediante scraping directo del HTML
   if (videoId) {
     for (const base of activeNodes) {
       try {
@@ -111,8 +139,8 @@ app.get('/api', async (req, res) => {
     }
   }
 
-  res.status(503).json({ error: 'Servidores de Invidious ocupados. Reintente en unos segundos.' });
+  res.status(503).json({ error: 'No se pudo obtener información del video en ninguna instancia.' });
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Proxy Híbrido (API + Scraping) activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Servidor escuchando en puerto ${PORT}`));
