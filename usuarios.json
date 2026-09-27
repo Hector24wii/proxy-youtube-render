@@ -22,8 +22,8 @@
     "password_hash": "",
     "email_verificado": false,
     "admin": false
-  }
-    {
+  },
+  {
     "user": "4",
     "id": "ROBERTplay",
     "email": "ROBERT@rejh.com",
@@ -31,12 +31,12 @@
     "email_verificado": true,
     "admin": true
   },
-    {
+  {
     "user": "5",
     "id": "EDUARDOplay",
     "email": "EDUARDO@rejh.com",
     "password_hash": "W1242",
     "email_verificado": true,
     "admin": true
-  },
+  }
 ]
